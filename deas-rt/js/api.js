@@ -2,7 +2,7 @@
 // DEAS RT — api.js
 // ============================================================
 
-const API_URL = 'https://script.google.com/macros/s/AKfycbwB3x0ZWMQoq0aDpzs4yM9wg0ZRHQ2S5_9A6gj7U53dzE5wb0FRsUk1OWlWmX03sMvL/exec';
+const API_URL = 'https://script.google.com/macros/s/AKfycbyccG29cPsw6enBYOYlonfi05h60lHWrH9-8Uw4HLcqIM5i9IAK5sSHrn-pIHP0NYZe/exec';
 
 // ── Helpers HTTP ──────────────────────────────────────────
 async function apiGet(action, nit = '') {
