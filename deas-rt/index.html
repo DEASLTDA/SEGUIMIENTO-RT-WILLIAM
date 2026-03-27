@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DEAS — Seguimiento Portería Remota</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='18' fill='%231B2F8A'/><text y='.9em' font-size='65' x='12' fill='white' font-family='Arial' font-weight='bold'>D</text></svg>">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+</head>
+<body>
+
+<!-- HEADER -->
+<header class="header">
+  <div class="header-logo">D</div>
+  <div class="header-title">
+    <h1>Seguimiento RT</h1>
+    <span class="header-divider">|</span>
+    <span class="header-subtitle">Portería Remota · DEAS Ltda.</span>
+  </div>
+  <div class="header-user">
+    <div class="name">William Bocanegra</div>
+    <div class="role">Coordinador DEAS</div>
+  </div>
+</header>
+
+<!-- MAIN -->
+<main class="main">
+
+  <!-- KPIs -->
+  <div class="kpi-strip" id="kpiStrip">
+    <div class="kpi-card blue">
+      <div class="kpi-icon">🏢</div>
+      <div class="kpi-value" id="kpiTotal">—</div>
+      <div class="kpi-label">Total Clientes</div>
+    </div>
+    <div class="kpi-card green">
+      <div class="kpi-icon">✅</div>
+      <div class="kpi-value" id="kpiVigentes">—</div>
+      <div class="kpi-label">Al día / Vigentes</div>
+    </div>
+    <div class="kpi-card amber">
+      <div class="kpi-icon">⏰</div>
+      <div class="kpi-value" id="kpiProximos">—</div>
+      <div class="kpi-label">Próximos a Vencer</div>
+    </div>
+    <div class="kpi-card red">
+      <div class="kpi-icon">⚠️</div>
+      <div class="kpi-value" id="kpiVencidos">—</div>
+      <div class="kpi-label">Contratos Vencidos</div>
+    </div>
+  </div>
+
+  <!-- TABLA CLIENTES -->
+  <div class="card">
+    <div class="card-header">
+      <h2>📋 Lista de Clientes</h2>
+      <div style="display:flex;gap:.7rem;align-items:center;flex-wrap:wrap;">
+        <div class="search-bar">
+          <span class="icon">🔍</span>
+          <input type="text" id="searchInput" placeholder="Buscar por nombre, NIT, administrador…">
+        </div>
+        <select id="filterEstado" style="max-width:160px">
+          <option value="">Todos los estados</option>
+          <option value="vigente">Vigentes</option>
+          <option value="proximo">Próximos</option>
+          <option value="vencido">Vencidos</option>
+          <option value="sin_fecha">Sin fecha</option>
+        </select>
+        <div class="export-bar">
+          <button class="btn btn-outline btn-sm" onclick="exportExcel()">📊 Excel</button>
+          <button class="btn btn-outline btn-sm" onclick="exportPDF()">📄 PDF</button>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="openModalNuevo()">+ Nuevo Cliente</button>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>NIT</th>
+            <th>Nombre del Puesto</th>
+            <th>Administrador</th>
+            <th>Inicio Contrato</th>
+            <th>Vencimiento</th>
+            <th>Estado</th>
+            <th style="text-align:center">Acciones</th>
+          </tr>
+        </thead>
+        <tbody id="clientesBody">
+          <tr><td colspan="7"><div class="loading-screen"><div class="spinner"></div><p>Cargando clientes…</p></div></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</main>
+
+<!-- MODAL NUEVO CLIENTE -->
+<div class="modal-overlay" id="modalNuevo" style="display:none" onclick="if(event.target===this)closeModalNuevo()">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>🏢 Nuevo Cliente</h3>
+      <button class="modal-close" onclick="closeModalNuevo()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-grid">
+        <div class="form-group"><label class="form-label">NIT *</label><input type="text" id="fn_nit" placeholder="800123456"></div>
+        <div class="form-group"><label class="form-label">No. Contrato</label><input type="text" id="fn_no_contrato"></div>
+        <div class="form-group full"><label class="form-label">Nombre del Puesto *</label><input type="text" id="fn_nombre" placeholder="EDIFICIO / CONJUNTO…"></div>
+        <div class="form-group full"><label class="form-label">Dirección</label><input type="text" id="fn_direccion"></div>
+        <div class="form-group"><label class="form-label">Representante Legal</label><input type="text" id="fn_rep_legal"></div>
+        <div class="form-group"><label class="form-label">Administrador</label><input type="text" id="fn_administrador"></div>
+        <div class="form-group"><label class="form-label">Teléfono Contacto</label><input type="text" id="fn_contacto_tel"></div>
+        <div class="form-group"><label class="form-label">Email Contacto</label><input type="email" id="fn_contacto_email"></div>
+        <div class="form-group"><label class="form-label">Fecha Inicio</label><input type="date" id="fn_fecha_inicio"></div>
+        <div class="form-group"><label class="form-label">Último Otrosí</label><input type="date" id="fn_ultimo_otrosi"></div>
+        <div class="form-group"><label class="form-label">Fecha Final Contrato</label><input type="date" id="fn_fecha_final"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModalNuevo()">Cancelar</button>
+      <button class="btn btn-primary" onclick="guardarNuevoCliente()">💾 Guardar Cliente</button>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST CONTAINER -->
+<div class="toast-container" id="toastContainer"></div>
+
+<script src="js/api.js"></script>
+<script>
+let allClientes = [];
+
+// ── Init ──────────────────────────────────────────────────
+async function init() {
+  try {
+    const cached = cacheGet('clientes', 120000);
+    if (cached) {
+      allClientes = cached;
+      renderTable(allClientes);
+      renderKPIs(allClientes);
+    }
+    const data = await fetchClientes();
+    allClientes = Array.isArray(data) ? data : [];
+    cacheSet('clientes', allClientes);
+    renderTable(allClientes);
+    renderKPIs(allClientes);
+  } catch(e) {
+    document.getElementById('clientesBody').innerHTML =
+      `<tr><td colspan="7"><div class="empty-state"><div class="icon">⚠️</div><p>Error al cargar datos. Verifica la URL del API en js/api.js</p></div></td></tr>`;
+    toast('Error al conectar con la API', 'error');
+  }
+}
+
+// ── KPIs ──────────────────────────────────────────────────
+function renderKPIs(list) {
+  const hoy = new Date();
+  let vigentes = 0, proximos = 0, vencidos = 0;
+  list.forEach(c => {
+    const dias = diasRestantes(c.fecha_final);
+    if (dias === null) return;
+    if (dias < 0) vencidos++;
+    else if (dias <= 60) proximos++;
+    else vigentes++;
+  });
+  document.getElementById('kpiTotal').textContent    = list.length;
+  document.getElementById('kpiVigentes').textContent = vigentes;
+  document.getElementById('kpiProximos').textContent = proximos;
+  document.getElementById('kpiVencidos').textContent = vencidos;
+}
+
+// ── Tabla ─────────────────────────────────────────────────
+function renderTable(list) {
+  const tbody = document.getElementById('clientesBody');
+  if (!list.length) {
+    tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state"><div class="icon">🏢</div><p>No hay clientes registrados</p></div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = list.map(c => {
+    const dias  = diasRestantes(c.fecha_final || c.tiempo_restante);
+    const badge = estadoBadge(dias);
+    return `
+    <tr>
+      <td><span class="nit-tag">${c.nit || c.cliente_id || '—'}</span></td>
+      <td class="td-name" title="${c.nombre}">${c.nombre || '—'}</td>
+      <td style="font-size:.83rem;color:var(--gray-600)">${c.administrador || '—'}</td>
+      <td style="font-size:.83rem">${formatDate(c.fecha_inicio)}</td>
+      <td style="font-size:.83rem">${formatDate(c.fecha_final)}</td>
+      <td><span class="badge ${badge.cls}">${badge.label}</span></td>
+      <td style="text-align:center">
+        <button class="btn btn-primary btn-sm btn-icon" title="Ver Perfil"
+          onclick="window.location.href='pages/perfil.html?id=${c.cliente_id}'">👁️</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+// ── Filtros ───────────────────────────────────────────────
+function applyFilters() {
+  const q    = document.getElementById('searchInput').value.toLowerCase().trim();
+  const est  = document.getElementById('filterEstado').value;
+  let list   = allClientes;
+
+  if (q) list = list.filter(c =>
+    (c.nombre        || '').toLowerCase().includes(q) ||
+    (c.nit           || '').toLowerCase().includes(q) ||
+    (c.administrador || '').toLowerCase().includes(q) ||
+    (c.cliente_id    || '').toString().includes(q)
+  );
+
+  if (est) list = list.filter(c => {
+    const dias  = diasRestantes(c.fecha_final);
+    const badge = estadoBadge(dias);
+    if (est === 'vigente')   return dias !== null && dias > 60;
+    if (est === 'proximo')   return dias !== null && dias >= 0 && dias <= 60;
+    if (est === 'vencido')   return dias !== null && dias < 0;
+    if (est === 'sin_fecha') return dias === null;
+    return true;
+  });
+
+  renderTable(list);
+}
+
+document.getElementById('searchInput').addEventListener('input', applyFilters);
+document.getElementById('filterEstado').addEventListener('change', applyFilters);
+
+// ── Modal Nuevo ───────────────────────────────────────────
+function openModalNuevo() {
+  document.getElementById('modalNuevo').style.display = 'flex';
+}
+function closeModalNuevo() {
+  document.getElementById('modalNuevo').style.display = 'none';
+}
+async function guardarNuevoCliente() {
+  const data = {
+    nit:          document.getElementById('fn_nit').value.trim(),
+    nombre:       document.getElementById('fn_nombre').value.trim(),
+    direccion:    document.getElementById('fn_direccion').value.trim(),
+    rep_legal:    document.getElementById('fn_rep_legal').value.trim(),
+    administrador:document.getElementById('fn_administrador').value.trim(),
+    contacto_tel: document.getElementById('fn_contacto_tel').value.trim(),
+    contacto_email:document.getElementById('fn_contacto_email').value.trim(),
+    no_contrato:  document.getElementById('fn_no_contrato').value.trim(),
+    fecha_inicio: document.getElementById('fn_fecha_inicio').value,
+    ultimo_otrosi:document.getElementById('fn_ultimo_otrosi').value,
+    fecha_final:  document.getElementById('fn_fecha_final').value,
+  };
+  if (!data.nit || !data.nombre) { toast('NIT y Nombre son obligatorios', 'warning'); return; }
+  data.cliente_id = 'C-' + Date.now();
+  try {
+    await saveCliente(data);
+    closeModalNuevo();
+    toast('Cliente guardado ✓', 'success');
+    cacheSet('clientes', null);
+    await init();
+  } catch(e) { toast('Error al guardar: ' + e.message, 'error'); }
+}
+
+// ── Exportar Excel ────────────────────────────────────────
+function exportExcel() {
+  const rows = allClientes.map(c => ({
+    NIT: c.nit || c.cliente_id,
+    Nombre: c.nombre,
+    Dirección: c.direccion || '',
+    Administrador: c.administrador || '',
+    'Inicio Contrato': formatDate(c.fecha_inicio),
+    'Último Otrosí': formatDate(c.ultimo_otrosi),
+    Vencimiento: formatDate(c.fecha_final),
+    Estado: estadoBadge(diasRestantes(c.fecha_final)).label,
+  }));
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Clientes RT');
+  XLSX.writeFile(wb, `DEAS_Clientes_RT_${new Date().toLocaleDateString('es-CO').replace(/\//g,'-')}.xlsx`);
+  toast('Excel exportado ✓', 'success');
+}
+
+// ── Exportar PDF ─────────────────────────────────────────
+function exportPDF() {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF('l', 'mm', 'a4');
+  doc.setFont('helvetica','bold');
+  doc.setFontSize(16);
+  doc.setTextColor(27, 47, 138);
+  doc.text('DEAS Ltda. — Seguimiento Portería Remota', 14, 16);
+  doc.setFontSize(9);
+  doc.setTextColor(100);
+  doc.text(`Generado: ${new Date().toLocaleString('es-CO')} | Coordinador: William Bocanegra`, 14, 23);
+  doc.autoTable({
+    startY: 28,
+    head: [['NIT','Nombre','Administrador','Inicio','Vencimiento','Estado']],
+    body: allClientes.map(c => [
+      c.nit || c.cliente_id,
+      c.nombre,
+      c.administrador || '',
+      formatDate(c.fecha_inicio),
+      formatDate(c.fecha_final),
+      estadoBadge(diasRestantes(c.fecha_final)).label,
+    ]),
+    styles: { fontSize: 7.5, cellPadding: 2 },
+    headStyles: { fillColor: [27,47,138], textColor: 255, fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: [240,244,255] },
+    didDrawCell: (data) => {
+      if (data.section === 'body' && data.column.index === 5) {
+        const val = data.cell.raw;
+        if (val.includes('Vencido')) data.cell.styles.textColor = [220,38,38];
+        else if (val.includes('Próximo')) data.cell.styles.textColor = [217,119,6];
+        else if (val.includes('Vigente')) data.cell.styles.textColor = [22,163,74];
+      }
+    }
+  });
+  doc.save(`DEAS_RT_${new Date().toLocaleDateString('es-CO').replace(/\//g,'-')}.pdf`);
+  toast('PDF exportado ✓', 'success');
+}
+
+// ── Toast ─────────────────────────────────────────────────
+function toast(msg, type = '') {
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.innerHTML = `${type === 'success' ? '✅' : type === 'error' ? '❌' : '⚠️'} ${msg}`;
+  document.getElementById('toastContainer').appendChild(el);
+  setTimeout(() => el.remove(), 3200);
+}
+
+init();
+</script>
+</body>
+</html>

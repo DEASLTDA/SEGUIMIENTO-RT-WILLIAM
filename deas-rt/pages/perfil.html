@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Perfil Cliente — DEAS RT</title>
+  <link rel="stylesheet" href="../css/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='18' fill='%231B2F8A'/><text y='.9em' font-size='65' x='12' fill='white' font-family='Arial' font-weight='bold'>D</text></svg>">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+</head>
+<body>
+
+<!-- HEADER -->
+<header class="header">
+  <div class="header-logo">D</div>
+  <div class="header-title">
+    <button class="header-back" onclick="window.location.href='../index.html'">← Volver</button>
+    <span class="header-divider">|</span>
+    <h1 id="headerTitle">Perfil Cliente</h1>
+  </div>
+  <div class="header-user">
+    <div class="name">William Bocanegra</div>
+    <div class="role">Coordinador DEAS</div>
+  </div>
+</header>
+
+<main class="main" id="mainContent">
+  <div class="loading-screen"><div class="spinner"></div><p>Cargando perfil…</p></div>
+</main>
+
+<!-- MODALS (dinámicos, se insertan por JS) -->
+<div id="modalContainer"></div>
+<div class="toast-container" id="toastContainer"></div>
+
+<script src="../js/api.js"></script>
+<script>
+const params     = new URLSearchParams(location.search);
+const clienteId  = params.get('id');
+let   cliente    = null;
+let   contrato   = null;
+let   reinvData  = [];
+let   bitData    = [];
+let   segData    = [];
+let   vigData    = [];
+
+const SEG_TIPOS = ['analisis_riesgo','visita_cliente','novedad','consigna','poliza'];
+const SEG_LABELS = {
+  analisis_riesgo: '🛡️ Análisis de Riesgo',
+  visita_cliente:  '🤝 Visitas Cliente',
+  novedad:         '📢 Novedades',
+  consigna:        '📋 Consignas',
+  poliza:          '📑 Pólizas',
+};
+let activeSeg = 'analisis_riesgo';
+
+// ── Init ──────────────────────────────────────────────────
+async function init() {
+  if (!clienteId) { renderError('ID de cliente no especificado'); return; }
+  try {
+    [cliente, contrato, reinvData, bitData, segData, vigData] = await Promise.all([
+      fetchCliente(clienteId),
+      fetchContrato(clienteId),
+      fetchReinversion(clienteId),
+      fetchBitacora(clienteId),
+      fetchSeguimiento(clienteId),
+      fetchVigilantes(clienteId),
+    ]);
+    if (!cliente) { renderError('Cliente no encontrado'); return; }
+    contrato = Array.isArray(contrato) && contrato.length ? contrato[0] : {};
+    renderPage();
+  } catch(e) {
+    renderError('Error al cargar datos: ' + e.message);
+  }
+}
+
+function renderError(msg) {
+  document.getElementById('mainContent').innerHTML =
+    `<div class="empty-state"><div class="icon">⚠️</div><p>${msg}</p></div>`;
+}
+
+// ── Render principal ──────────────────────────────────────
+function renderPage() {
+  document.getElementById('headerTitle').textContent = cliente.nombre || 'Perfil';
+  document.getElementById('mainContent').innerHTML = `
+  <div class="profile-grid">
+    <!-- SIDEBAR -->
+    <aside class="profile-sidebar">
+      ${renderFicha()}
+      ${renderContratoCard()}
+    </aside>
+
+    <!-- MAIN PANEL -->
+    <div>
+      ${renderReinversionCard()}
+      ${renderServicioCard()}
+      ${renderSeguimientoCard()}
+    </div>
+  </div>`;
+}
+
+// ── Ficha Cliente ─────────────────────────────────────────
+function renderFicha() {
+  const dias  = diasRestantes(cliente.fecha_final);
+  const badge = estadoBadge(dias);
+  return `
+  <div class="card">
+    <div class="card-header">
+      <h2>📇 Ficha Cliente</h2>
+      <button class="btn btn-outline btn-sm" onclick="openEditCliente()">✏️ Editar</button>
+    </div>
+    <div class="card-body">
+      <div class="ficha-avatar">${initials(cliente.nombre)}</div>
+      <div class="ficha-nombre">${cliente.nombre || '—'}</div>
+      <div class="ficha-nit">NIT: ${cliente.nit || cliente.cliente_id || '—'}</div>
+      <div style="margin:.6rem 0"><span class="badge ${badge.cls}">${badge.label}</span></div>
+
+      ${fichaRow('📍 Dirección',        cliente.direccion || '—')}
+      ${fichaRow('👤 Rep. Legal',        cliente.rep_legal || '—')}
+      ${fichaRow('🏗️ Administrador',    cliente.administrador || '—')}
+      ${fichaRow('📞 Teléfono',          cliente.contacto_tel || '—')}
+      ${fichaRow('✉️ Email',             cliente.contacto_email || '—')}
+      ${fichaRow('📄 No. Contrato',      cliente.no_contrato || '—')}
+      ${fichaRow('📅 Inicio',            formatDate(cliente.fecha_inicio))}
+      ${fichaRow('🔄 Último Otrosí',     formatDate(cliente.ultimo_otrosi))}
+      ${fichaRow('⏱️ Antigüedad',        calcAntiguedad(cliente.fecha_inicio))}
+    </div>
+  </div>`;
+}
+function fichaRow(label, value) {
+  return `<div class="ficha-row">
+    <span class="ficha-label">${label}</span>
+    <span class="ficha-value">${value}</span>
+  </div>`;
+}
+
+// ── Contrato Card ─────────────────────────────────────────
+function renderContratoCard() {
+  return `
+  <div class="card">
+    <div class="card-header">
+      <h2>📝 Contrato</h2>
+      <button class="btn btn-outline btn-sm" onclick="openEditContrato()">✏️ Editar</button>
+    </div>
+    <div class="card-body">
+      <div class="contrato-timeline">
+        <div class="contrato-item">
+          <div class="ci-label">Inicio</div>
+          <div class="ci-value">${formatDate(cliente.fecha_inicio)}</div>
+        </div>
+        <div class="contrato-item">
+          <div class="ci-label">Término</div>
+          <div class="ci-value">${formatDate(cliente.fecha_final)}</div>
+        </div>
+        <div class="contrato-item">
+          <div class="ci-label">Meses</div>
+          <div class="ci-value">${contrato.tiempo_pactado_meses || '—'}</div>
+        </div>
+      </div>
+      ${contrato.observaciones ? `<p style="font-size:.8rem;color:var(--gray-600);margin-top:.5rem">${contrato.observaciones}</p>` : ''}
+    </div>
+  </div>`;
+}
+
+// ── Reinversión ───────────────────────────────────────────
+function renderReinversionCard() {
+  const totalReinv = parseFloat(reinvData[0]?.valor_reinversion || 0);
+  const tiempoPact = reinvData[0]?.tiempo_pactado || '—';
+  const gastado    = bitData.reduce((s, b) => s + (parseFloat(b.monto) || 0), 0);
+  const pct        = totalReinv > 0 ? Math.min((gastado / totalReinv) * 100, 100) : 0;
+  const isOver     = gastado > totalReinv;
+
+  return `
+  <div class="card" style="margin-bottom:1.2rem">
+    <div class="card-header">
+      <h2>💰 Valor Reinversión</h2>
+      <div style="display:flex;gap:.5rem">
+        <button class="btn btn-outline btn-sm" onclick="openBitacora()">📋 Bitácora/Historial</button>
+        <button class="btn btn-primary btn-sm" onclick="openNuevoGasto()">+ Registrar Gasto</button>
+        <button class="btn btn-outline btn-sm" onclick="editarReinversion()">✏️ Editar</button>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="reinv-grid">
+        <div class="reinv-val total">
+          <div class="rv-label">💰 Valor Reinversión</div>
+          <div class="rv-amount">${formatCOP(totalReinv)}</div>
+        </div>
+        <div class="reinv-val pactado">
+          <div class="rv-label">⏳ Tiempo Pactado</div>
+          <div class="rv-amount" style="color:var(--gray-800)">${tiempoPact}</div>
+        </div>
+        <div class="reinv-val gastado">
+          <div class="rv-label">🔴 Valor Gastado</div>
+          <div class="rv-amount">${formatCOP(gastado)}</div>
+        </div>
+      </div>
+      ${totalReinv > 0 ? `
+      <div class="reinv-bar-wrap">
+        <div class="reinv-bar-labels">
+          <span>${pct.toFixed(1)}% utilizado</span>
+          <span>Disponible: ${formatCOP(totalReinv - gastado)}</span>
+        </div>
+        <div class="reinv-bar">
+          <div class="reinv-bar-fill ${isOver ? 'over' : ''}" style="width:${pct}%"></div>
+        </div>
+      </div>` : '<p style="font-size:.8rem;color:var(--gray-400);text-align:center;padding:.5rem">Sin valor de reinversión registrado</p>'}
+      ${bitData.length ? `
+      <div style="margin-top:.8rem">
+        <p style="font-size:.75rem;font-weight:600;color:var(--gray-400);text-transform:uppercase;letter-spacing:.5px;margin-bottom:.4rem">Últimos gastos</p>
+        <div class="registro-list">
+          ${bitData.slice(-3).reverse().map(b => `
+          <div class="registro-item" style="border-left-color:var(--red)">
+            <div class="registro-date">${formatDate(b.fecha)}</div>
+            <div class="registro-content">
+              <div class="registro-title" style="color:var(--red)">${formatCOP(b.monto)}</div>
+              <div class="registro-desc">${b.descripcion || '—'}</div>
+            </div>
+          </div>`).join('')}
+        </div>
+      </div>` : ''}
+    </div>
+  </div>`;
+}
+
+// ── Servicio ──────────────────────────────────────────────
+function renderServicioCard() {
+  return `
+  <div class="card" style="margin-bottom:1.2rem">
+    <div class="card-header">
+      <h2>🛡️ Servicio</h2>
+      <div style="display:flex;gap:.5rem">
+        <button class="btn btn-outline btn-sm" onclick="openVigilantes()">👮 Ver Vigilantes (${vigData.length})</button>
+        <button class="btn btn-primary btn-sm" onclick="openEditServicio()">✏️ Editar</button>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="contrato-timeline">
+        <div class="contrato-item">
+          <div class="ci-label">Horas Servicio</div>
+          <div class="ci-value" id="srv_horas">${contrato.servicio_horas || '—'}</div>
+        </div>
+        <div class="contrato-item">
+          <div class="ci-label">Modalidad</div>
+          <div class="ci-value" id="srv_modalidad">${contrato.modalidad || '—'}</div>
+        </div>
+        <div class="contrato-item">
+          <div class="ci-label">Cant. Vigilantes</div>
+          <div class="ci-value" id="srv_cant">${contrato.cant_vigilantes || '—'}</div>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+// ── Seguimiento ───────────────────────────────────────────
+function renderSeguimientoCard() {
+  return `
+  <div class="card">
+    <div class="card-header">
+      <h2>📊 Seguimiento Cliente</h2>
+      <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+        <button class="btn btn-outline btn-sm" onclick="exportSegExcel()">📊 Excel</button>
+        <button class="btn btn-outline btn-sm" onclick="exportSegPDF()">📄 PDF</button>
+        <button class="btn btn-primary btn-sm" onclick="openNuevoSeg()">+ Nuevo Registro</button>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="seg-tabs" id="segTabs">
+        ${SEG_TIPOS.map(t => `
+        <button class="seg-tab${t===activeSeg?' active':''}" onclick="setSegTab('${t}')">${SEG_LABELS[t]}</button>`).join('')}
+      </div>
+      <div id="segContent">${renderSegList()}</div>
+    </div>
+  </div>`;
+}
+
+function setSegTab(tipo) {
+  activeSeg = tipo;
+  document.querySelectorAll('.seg-tab').forEach((el,i) => {
+    el.classList.toggle('active', SEG_TIPOS[i] === tipo);
+  });
+  document.getElementById('segContent').innerHTML = renderSegList();
+}
+
+function renderSegList() {
+  const items = segData.filter(s => s.tipo === activeSeg);
+  if (!items.length) return `<div class="empty-state"><div class="icon">📭</div><p>Sin registros en esta categoría</p></div>`;
+  return `<div class="registro-list">
+    ${items.slice().reverse().map(s => `
+    <div class="registro-item">
+      <div class="registro-date">${formatDate(s.fecha)}</div>
+      <div class="registro-content">
+        <div class="registro-title">${s.descripcion || '—'}</div>
+        <div class="registro-desc" style="font-size:.75rem">${s.creado_por ? 'Por: ' + s.creado_por : ''}</div>
+      </div>
+      <div class="registro-actions">
+        <button class="btn btn-outline btn-sm btn-icon" title="Eliminar" onclick="eliminarSeg('${s.seg_id}')">🗑️</button>
+      </div>
+    </div>`).join('')}
+  </div>`;
+}
+
+// ── MODAL helpers ─────────────────────────────────────────
+function showModal(html) {
+  const c = document.getElementById('modalContainer');
+  c.innerHTML = html;
+  c.querySelector('.modal-overlay').style.display = 'flex';
+}
+function closeModal() {
+  document.getElementById('modalContainer').innerHTML = '';
+}
+
+// ── Edit Cliente ──────────────────────────────────────────
+function openEditCliente() {
+  showModal(`
+  <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal modal-lg">
+      <div class="modal-header"><h3>✏️ Editar Ficha Cliente</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+      <div class="modal-body">
+        <div class="form-grid">
+          <div class="form-group"><label class="form-label">NIT</label><input id="ec_nit" value="${cliente.nit||''}" type="text"></div>
+          <div class="form-group"><label class="form-label">No. Contrato</label><input id="ec_no_contrato" value="${cliente.no_contrato||''}" type="text"></div>
+          <div class="form-group full"><label class="form-label">Nombre</label><input id="ec_nombre" value="${cliente.nombre||''}" type="text"></div>
+          <div class="form-group full"><label class="form-label">Dirección</label><input id="ec_direccion" value="${cliente.direccion||''}" type="text"></div>
+          <div class="form-group"><label class="form-label">Representante Legal</label><input id="ec_rep_legal" value="${cliente.rep_legal||''}" type="text"></div>
+          <div class="form-group"><label class="form-label">Administrador</label><input id="ec_administrador" value="${cliente.administrador||''}" type="text"></div>
+          <div class="form-group"><label class="form-label">Teléfono</label><input id="ec_tel" value="${cliente.contacto_tel||''}" type="text"></div>
+          <div class="form-group"><label class="form-label">Email</label><input id="ec_email" value="${cliente.contacto_email||''}" type="email"></div>
+          <div class="form-group"><label class="form-label">Fecha Inicio</label><input id="ec_inicio" value="${isoDate(cliente.fecha_inicio)}" type="date"></div>
+          <div class="form-group"><label class="form-label">Último Otrosí</label><input id="ec_otrosi" value="${isoDate(cliente.ultimo_otrosi)}" type="date"></div>
+          <div class="form-group"><label class="form-label">Fecha Final</label><input id="ec_final" value="${isoDate(cliente.fecha_final)}" type="date"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="closeModal()">Cancelar</button>
+        <button class="btn btn-primary" onclick="guardarEditCliente()">💾 Guardar</button>
+      </div>
+    </div>
+  </div>`);
+}
+
+async function guardarEditCliente() {
+  const upd = { ...cliente,
+    nit:            document.getElementById('ec_nit').value,
+    no_contrato:    document.getElementById('ec_no_contrato').value,
+    nombre:         document.getElementById('ec_nombre').value,
+    direccion:      document.getElementById('ec_direccion').value,
+    rep_legal:      document.getElementById('ec_rep_legal').value,
+    administrador:  document.getElementById('ec_administrador').value,
+    contacto_tel:   document.getElementById('ec_tel').value,
+    contacto_email: document.getElementById('ec_email').value,
+    fecha_inicio:   document.getElementById('ec_inicio').value,
+    ultimo_otrosi:  document.getElementById('ec_otrosi').value,
+    fecha_final:    document.getElementById('ec_final').value,
+  };
+  await saveCliente(upd);
+  cliente = upd;
+  closeModal();
+  toast('Ficha actualizada ✓', 'success');
+  renderPage();
+}
+
+// ── Edit Contrato ─────────────────────────────────────────
+function openEditContrato() {
+  showModal(`
+  <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal">
+      <div class="modal-header"><h3>📝 Editar Contrato</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+      <div class="modal-body">
+        <div class="form-grid">
+          <div class="form-group"><label class="form-label">Fecha Inicio</label><input id="ct_inicio" value="${isoDate(cliente.fecha_inicio)}" type="date"></div>
+          <div class="form-group"><label class="form-label">Fecha Término</label><input id="ct_final" value="${isoDate(cliente.fecha_final)}" type="date"></div>
+          <div class="form-group"><label class="form-label">Tiempo Pactado (meses)</label><input id="ct_meses" value="${contrato.tiempo_pactado_meses||''}" type="number"></div>
+          <div class="form-group full"><label class="form-label">Observaciones</label><textarea id="ct_obs">${contrato.observaciones||''}</textarea></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="closeModal()">Cancelar</button>
+        <button class="btn btn-primary" onclick="guardarContrato()">💾 Guardar</button>
+      </div>
+    </div>
+  </div>`);
+}
+
+async function guardarContrato() {
+  const upd = { ...contrato, cliente_id: clienteId,
+    tiempo_pactado_meses: document.getElementById('ct_meses').value,
+    observaciones:        document.getElementById('ct_obs').value,
+  };
+  await saveContrato(upd);
+  contrato = upd;
+  closeModal();
+  toast('Contrato actualizado ✓', 'success');
+  renderPage();
+}
+
+// ── Edit Servicio ─────────────────────────────────────────
+function openEditServicio() {
+  showModal(`
+  <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal">
+      <div class="modal-header"><h3>🛡️ Editar Servicio</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+      <div class="modal-body">
+        <div class="form-grid">
+          <div class="form-group"><label class="form-label">Horas de Servicio</label><input id="sv_horas" value="${contrato.servicio_horas||''}" placeholder="Ej: 24h, 12h, 8h"></div>
+          <div class="form-group"><label class="form-label">Modalidad</label><input id="sv_modalidad" value="${contrato.modalidad||''}" placeholder="2x2x2, 4x2, etc."></div>
+          <div class="form-group"><label class="form-label">Cantidad Vigilantes</label><input id="sv_cant" value="${contrato.cant_vigilantes||''}" type="number" min="1"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="closeModal()">Cancelar</button>
+        <button class="btn btn-primary" onclick="guardarServicio()">💾 Guardar</button>
+      </div>
+    </div>
+  </div>`);
+}
+
+async function guardarServicio() {
+  const upd = { ...contrato, cliente_id: clienteId,
+    servicio_horas:   document.getElementById('sv_horas').value,
+    modalidad:        document.getElementById('sv_modalidad').value,
+    cant_vigilantes:  document.getElementById('sv_cant').value,
+  };
+  await saveContrato(upd);
+  contrato = upd;
+  closeModal();
+  toast('Servicio actualizado ✓', 'success');
+  renderPage();
+}
+
+// ── Reinversión editar ────────────────────────────────────
+function editarReinversion() {
+  const r = reinvData[0] || {};
+  showModal(`
+  <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal">
+      <div class="modal-header"><h3>💰 Editar Reinversión</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+      <div class="modal-body">
+        <div class="form-grid">
+          <div class="form-group"><label class="form-label">Valor Reinversión (COP)</label><input id="rv_valor" value="${r.valor_reinversion||''}" type="number"></div>
+          <div class="form-group"><label class="form-label">Tiempo Pactado</label><input id="rv_tiempo" value="${r.tiempo_pactado||''}"></div>
+          <div class="form-group full"><label class="form-label">Descripción</label><textarea id="rv_desc">${r.descripcion||''}</textarea></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="closeModal()">Cancelar</button>
+        <button class="btn btn-primary" onclick="guardarReinvEditar()">💾 Guardar</button>
+      </div>
+    </div>
+  </div>`);
+}
+
+async function guardarReinvEditar() {
+  const upd = {
+    reinv_id:         reinvData[0]?.reinv_id || 'RI-' + Date.now(),
+    cliente_id:       clienteId,
+    valor_reinversion:document.getElementById('rv_valor').value,
+    tiempo_pactado:   document.getElementById('rv_tiempo').value,
+    descripcion:      document.getElementById('rv_desc').value,
+    fecha_registro:   new Date().toLocaleDateString('es-CO'),
+  };
+  await saveReinversion(upd);
+  reinvData = [upd];
+  closeModal();
+  toast('Reinversión actualizada ✓', 'success');
+  renderPage();
+}
+
+// ── Nuevo Gasto (bitácora) ─────────────────────────────────
+function openNuevoGasto() {
+  showModal(`
+  <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal">
+      <div class="modal-header"><h3>🔴 Registrar Gasto</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+      <div class="modal-body">
+        <div class="form-grid">
+          <div class="form-group"><label class="form-label">Monto (COP) *</label><input id="bg_monto" type="number" placeholder="0"></div>
+          <div class="form-group"><label class="form-label">Fecha *</label><input id="bg_fecha" type="date" value="${new Date().toISOString().split('T')[0]}"></div>
+          <div class="form-group full"><label class="form-label">Descripción *</label><textarea id="bg_desc" placeholder="Detalle del gasto…"></textarea></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="closeModal()">Cancelar</button>
+        <button class="btn btn-danger" onclick="guardarGasto()">🔴 Registrar Gasto</button>
+      </div>
+    </div>
+  </div>`);
+}
+
+async function guardarGasto() {
+  const monto = document.getElementById('bg_monto').value;
+  const fecha = document.getElementById('bg_fecha').value;
+  const desc  = document.getElementById('bg_desc').value;
+  if (!monto || !fecha || !desc) { toast('Completa todos los campos', 'warning'); return; }
+  const data = { cliente_id: clienteId, tipo: 'gasto', monto, fecha: formatDate(fecha), descripcion: desc, creado_por: 'William Bocanegra' };
+  await addBitacora(data);
+  bitData.push(data);
+  closeModal();
+  toast('Gasto registrado ✓', 'success');
+  renderPage();
+}
+
+// ── Bitácora (historial completo) ─────────────────────────
+function openBitacora() {
+  const rows = bitData.slice().reverse();
+  showModal(`
+  <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <h3>📋 Bitácora de Gastos — ${cliente.nombre}</h3>
+        <div style="display:flex;gap:.5rem">
+          <button class="btn btn-outline btn-sm" onclick="exportBitExcel()">📊 Excel</button>
+          <button class="btn btn-outline btn-sm" onclick="exportBitPDF()">📄 PDF</button>
+          <button class="modal-close" onclick="closeModal()">✕</button>
+        </div>
+      </div>
+      <div class="modal-body">
+        ${rows.length ? `
+        <div class="registro-list">
+          ${rows.map(b => `
+          <div class="registro-item" style="border-left-color:var(--red)">
+            <div class="registro-date">${formatDate(b.fecha)}</div>
+            <div class="registro-content">
+              <div class="registro-title" style="color:var(--red)">${formatCOP(b.monto)}</div>
+              <div class="registro-desc">${b.descripcion}</div>
+              <div class="registro-desc" style="margin-top:.2rem;font-size:.72rem;color:var(--gray-400)">${b.creado_por||''}</div>
+            </div>
+          </div>`).join('')}
+        </div>
+        <div style="margin-top:1rem;padding-top:1rem;border-top:1.5px solid var(--gray-100);display:flex;justify-content:space-between;font-weight:600">
+          <span>Total gastado:</span>
+          <span style="color:var(--red)">${formatCOP(bitData.reduce((s,b)=>s+(parseFloat(b.monto)||0),0))}</span>
+        </div>` : '<div class="empty-state"><div class="icon">📭</div><p>Sin registros de gastos</p></div>'}
+      </div>
+    </div>
+  </div>`);
+}
+
+// ── Vigilantes ────────────────────────────────────────────
+function openVigilantes() {
+  showModal(`
+  <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <h3>👮 Vigilantes — ${cliente.nombre}</h3>
+        <div style="display:flex;gap:.5rem">
+          <button class="btn btn-primary btn-sm" onclick="openNuevoVigilante()">+ Agregar</button>
+          <button class="modal-close" onclick="closeModal()">✕</button>
+        </div>
+      </div>
+      <div class="modal-body" id="vigModalBody">
+        ${renderVigList()}
+      </div>
+    </div>
+  </div>`);
+}
+
+function renderVigList() {
+  if (!vigData.length) return `<div class="empty-state"><div class="icon">👮</div><p>Sin vigilantes registrados</p></div>`;
+  return `<div class="vig-list">${vigData.map(v => `
+  <div class="vig-item">
+    <div class="vig-avatar">${initials(v.nombre)}</div>
+    <div class="vig-info" style="flex:1">
+      <div class="vn">${v.nombre || '—'}</div>
+      <div class="vc">CC: ${v.cedula||'—'} | ${v.cargo||'Vigilante'} | ${v.telefono||'—'}</div>
+    </div>
+    <span class="badge ${v.activo==='true'||v.activo===true?'badge-green':'badge-gray'}">${v.activo==='true'||v.activo===true?'Activo':'Inactivo'}</span>
+  </div>`).join('')}</div>`;
+}
+
+function openNuevoVigilante() {
+  showModal(`
+  <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal">
+      <div class="modal-header"><h3>👮 Nuevo Vigilante</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+      <div class="modal-body">
+        <div class="form-grid">
+          <div class="form-group full"><label class="form-label">Nombre completo *</label><input id="vg_nombre" type="text"></div>
+          <div class="form-group"><label class="form-label">Cédula *</label><input id="vg_cedula" type="text"></div>
+          <div class="form-group"><label class="form-label">Cargo</label><input id="vg_cargo" value="Vigilante" type="text"></div>
+          <div class="form-group"><label class="form-label">Teléfono</label><input id="vg_tel" type="text"></div>
+          <div class="form-group"><label class="form-label">Estado</label>
+            <select id="vg_activo"><option value="true">Activo</option><option value="false">Inactivo</option></select>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="openVigilantes()">Cancelar</button>
+        <button class="btn btn-primary" onclick="guardarVigilante()">💾 Guardar</button>
+      </div>
+    </div>
+  </div>`);
+}
+
+async function guardarVigilante() {
+  const data = {
+    cliente_id: clienteId,
+    nombre:  document.getElementById('vg_nombre').value,
+    cedula:  document.getElementById('vg_cedula').value,
+    cargo:   document.getElementById('vg_cargo').value,
+    telefono:document.getElementById('vg_tel').value,
+    activo:  document.getElementById('vg_activo').value,
+  };
+  if (!data.nombre || !data.cedula) { toast('Nombre y cédula son obligatorios', 'warning'); return; }
+  await addVigilante(data);
+  vigData.push(data);
+  closeModal();
+  toast('Vigilante agregado ✓', 'success');
+  renderPage();
+}
+
+// ── Nuevo Seguimiento ─────────────────────────────────────
+function openNuevoSeg() {
+  showModal(`
+  <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal">
+      <div class="modal-header"><h3>📊 Nuevo Registro de Seguimiento</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+      <div class="modal-body">
+        <div class="form-grid">
+          <div class="form-group full">
+            <label class="form-label">Tipo *</label>
+            <select id="ns_tipo">
+              ${SEG_TIPOS.map(t => `<option value="${t}"${t===activeSeg?' selected':''}>${SEG_LABELS[t]}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-group"><label class="form-label">Fecha *</label><input id="ns_fecha" type="date" value="${new Date().toISOString().split('T')[0]}"></div>
+          <div class="form-group"><label class="form-label">Registrado por</label><input id="ns_creado" value="William Bocanegra" type="text"></div>
+          <div class="form-group full"><label class="form-label">Descripción / Detalle *</label><textarea id="ns_desc" placeholder="Describe el registro…"></textarea></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="closeModal()">Cancelar</button>
+        <button class="btn btn-primary" onclick="guardarSeguimiento()">💾 Guardar</button>
+      </div>
+    </div>
+  </div>`);
+}
+
+async function guardarSeguimiento() {
+  const data = {
+    cliente_id:  clienteId,
+    tipo:        document.getElementById('ns_tipo').value,
+    fecha:       formatDate(document.getElementById('ns_fecha').value),
+    descripcion: document.getElementById('ns_desc').value,
+    creado_por:  document.getElementById('ns_creado').value,
+  };
+  if (!data.descripcion) { toast('Escribe una descripción', 'warning'); return; }
+  await addSeguimiento(data);
+  segData.push(data);
+  activeSeg = data.tipo;
+  closeModal();
+  toast('Seguimiento registrado ✓', 'success');
+  renderPage();
+}
+
+async function eliminarSeg(id) {
+  if (!confirm('¿Eliminar este registro?')) return;
+  await apiPost('deleteRow', null);  // simplificado, ajustar según necesidad
+  segData = segData.filter(s => s.seg_id !== id);
+  document.getElementById('segContent').innerHTML = renderSegList();
+  toast('Registro eliminado', 'warning');
+}
+
+// ── Exports ───────────────────────────────────────────────
+function exportBitExcel() {
+  const ws = XLSX.utils.json_to_sheet(bitData.map(b => ({
+    Fecha: formatDate(b.fecha), Monto: parseFloat(b.monto)||0, Descripción: b.descripcion, Por: b.creado_por
+  })));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Bitácora');
+  XLSX.writeFile(wb, `DEAS_Bitacora_${cliente.nit||clienteId}.xlsx`);
+}
+function exportBitPDF() {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  doc.setFontSize(14); doc.setTextColor(27,47,138);
+  doc.text(`DEAS RT — Bitácora Gastos`, 14, 15);
+  doc.setFontSize(10); doc.setTextColor(100);
+  doc.text(cliente.nombre, 14, 22);
+  doc.autoTable({
+    startY: 27,
+    head: [['Fecha','Monto','Descripción','Por']],
+    body: bitData.map(b => [formatDate(b.fecha), formatCOP(b.monto), b.descripcion, b.creado_por||'']),
+    styles:{fontSize:8}, headStyles:{fillColor:[27,47,138],textColor:255},
+  });
+  doc.save(`DEAS_Bitacora_${cliente.nit||clienteId}.pdf`);
+}
+function exportSegExcel() {
+  const ws = XLSX.utils.json_to_sheet(segData.map(s => ({
+    Tipo: SEG_LABELS[s.tipo]||s.tipo, Fecha: formatDate(s.fecha), Descripción: s.descripcion, Por: s.creado_por
+  })));
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Seguimiento');
+  XLSX.writeFile(wb, `DEAS_Seguimiento_${cliente.nit||clienteId}.xlsx`);
+  toast('Excel exportado ✓','success');
+}
+function exportSegPDF() {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  doc.setFontSize(14); doc.setTextColor(27,47,138);
+  doc.text('DEAS RT — Seguimiento Cliente', 14, 15);
+  doc.setFontSize(9); doc.setTextColor(100);
+  doc.text(`${cliente.nombre} | NIT: ${cliente.nit||''}`, 14, 22);
+  doc.autoTable({
+    startY: 27,
+    head: [['Tipo','Fecha','Descripción','Por']],
+    body: segData.map(s => [SEG_LABELS[s.tipo]||s.tipo, formatDate(s.fecha), s.descripcion, s.creado_por||'']),
+    styles:{fontSize:7.5}, headStyles:{fillColor:[27,47,138],textColor:255},
+    alternateRowStyles:{fillColor:[240,244,255]},
+  });
+  doc.save(`DEAS_Seguimiento_${cliente.nit||clienteId}.pdf`);
+  toast('PDF exportado ✓','success');
+}
+
+// ── Util: date → ISO ──────────────────────────────────────
+function isoDate(str) {
+  if (!str) return '';
+  const m = String(str).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m) return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+  try { const d = new Date(str); if(!isNaN(d)) return d.toISOString().split('T')[0]; } catch(e){}
+  return str;
+}
+
+// ── Toast ─────────────────────────────────────────────────
+function toast(msg, type='') {
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.innerHTML = `${type==='success'?'✅':type==='error'?'❌':'⚠️'} ${msg}`;
+  document.getElementById('toastContainer').appendChild(el);
+  setTimeout(()=>el.remove(), 3200);
+}
+
+init();
+</script>
+</body>
+</html>
